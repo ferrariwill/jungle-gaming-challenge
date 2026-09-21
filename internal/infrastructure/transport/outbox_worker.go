@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -54,7 +55,7 @@ func (w *OutboxWorker) Start() {
 	w.wg.Add(1)
 	defer w.wg.Done()
 
-	log.Printf("Starting outbox worker for queue")
+	log.Printf("Starting outbox worker for events queue")
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
@@ -98,22 +99,31 @@ func (w *OutboxWorker) processPendingEvents() {
 		}
 
 		for _, event := range events {
-			_, err := w.sqsClient.SendMessage(ctx, &sqs.SendMessageInput{
-				QueueUrl:    aws.String(w.cfg.WagerQueueURL),
+			input := &sqs.SendMessageInput{
+				QueueUrl:    aws.String(w.cfg.EventsQueueURL),
 				MessageBody: aws.String(event.Payload),
-			})
+			}
+			if strings.HasSuffix(w.cfg.EventsQueueURL, ".fifo") {
+				input.MessageGroupId = aws.String(event.AggregateID)
+				input.MessageDeduplicationId = aws.String(event.ID)
+			}
 
+			_, err := w.sqsClient.SendMessage(ctx, input)
 			if err != nil {
 				log.Printf("Error sending message to SQS: %v", err)
-				nextTry := time.Now().Add(5 * time.Second)
-				_ = w.messageRepo.UpdateOutboxRetry(ctx, tx, event.ID, nextTry)
+				MetricsOutboxErrors.Add(1)
+				backoff := time.Duration(1<<min(event.Attempts, 6)) * time.Second
+				nextTry := time.Now().UTC().Add(backoff)
+				if err := w.messageRepo.UpdateOutboxRetry(ctx, tx, event.ID, nextTry, w.cfg.OutboxMaxAttempts); err != nil {
+					return err
+				}
 				continue
 			}
 
-			err = w.messageRepo.MarkOutboxAsPublished(ctx, tx, event.ID)
-			if err != nil {
+			if err := w.messageRepo.MarkOutboxAsPublished(ctx, tx, event.ID); err != nil {
 				return err
 			}
+			MetricsOutboxPublished.Add(1)
 			log.Printf("Published event: %s", event.ID)
 		}
 		return nil
@@ -121,5 +131,6 @@ func (w *OutboxWorker) processPendingEvents() {
 
 	if err != nil {
 		log.Printf("Error processing pending events: %v", err)
+		MetricsOutboxErrors.Add(1)
 	}
 }

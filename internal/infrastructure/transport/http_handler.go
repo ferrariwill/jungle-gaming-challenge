@@ -1,14 +1,19 @@
 package transport
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/ferrariwill/jungle-gaming-challenge/internal/domain"
 	"github.com/ferrariwill/jungle-gaming-challenge/internal/infrastructure/repository"
 	"github.com/ferrariwill/jungle-gaming-challenge/internal/usecase"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type HTTPHandler struct {
@@ -17,6 +22,7 @@ type HTTPHandler struct {
 	reconciliationUsecase *usecase.ReconciliationUsecase
 	walletRepo            *repository.WalletRepository
 	authEvent             *AuthMiddleware
+	pool                  *pgxpool.Pool
 }
 
 func NewHTTPHandler(
@@ -25,6 +31,7 @@ func NewHTTPHandler(
 	reconciliationUsecase *usecase.ReconciliationUsecase,
 	walletRepo *repository.WalletRepository,
 	authEvent *AuthMiddleware,
+	pool *pgxpool.Pool,
 ) *HTTPHandler {
 	return &HTTPHandler{
 		wagerUsecase:          wagerUsecase,
@@ -32,6 +39,7 @@ func NewHTTPHandler(
 		reconciliationUsecase: reconciliationUsecase,
 		walletRepo:            walletRepo,
 		authEvent:             authEvent,
+		pool:                  pool,
 	}
 }
 
@@ -42,6 +50,15 @@ func (h *HTTPHandler) handleLiveness(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPHandler) handleReadiness(w http.ResponseWriter, r *http.Request) {
+	if h.pool != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		if err := h.pool.Ping(ctx); err != nil {
+			h.respondWithError(w, http.StatusServiceUnavailable, "database not ready")
+			return
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(`{"status":"READY"}`))
@@ -59,16 +76,15 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	mux.HandleFunc("POST /wallets", h.handleCreateWallet)
 	mux.HandleFunc("GET /wallets/{walletId}", h.handleGetWallet)
 	mux.HandleFunc("POST /wagering/transactions", h.handleProcessTransaction)
-	mux.HandleFunc("GET /wallets/{walletId}/reconciliation", h.handleReconciliation)
+	mux.HandleFunc("POST /wallets/{walletId}/reconciliation", h.handleReconciliation)
 
 	mux.HandleFunc("GET /health/live", h.handleLiveness)
 	mux.HandleFunc("GET /health/ready", h.handleReadiness)
+	mux.HandleFunc("GET /metrics", handleMetrics)
 
-	//Aplica o middleware de autenticacao em todas as rotas
 	h.authEvent.Authenticate(mux).ServeHTTP(w, r)
 }
 
-// Responsavel por criar uma nova carteira de jogador
 func (h *HTTPHandler) handleCreateWallet(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		PlayerID       string `json:"playerId"`
@@ -78,28 +94,42 @@ func (h *HTTPHandler) handleCreateWallet(w http.ResponseWriter, r *http.Request)
 		} `json:"initialBalance"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		h.respondWithError(w, http.StatusBadRequest, err.Error())
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		h.respondWithError(w, http.StatusBadRequest, "read body: "+err.Error())
 		return
 	}
+
+	log.Printf("WALLET RAW BODY: %q", string(raw))
+
+	if err := json.Unmarshal(raw, &body); err != nil {
+		h.respondWithError(w, http.StatusBadRequest, "decode body: "+err.Error())
+		return
+	}
+
+	log.Printf("WALLET DECODED: %+v", body)
 
 	output, err := h.openWalletUsecase.Execute(r.Context(), usecase.OpenWalletInputDTO{
 		PlayerID:        body.PlayerID,
 		InitialAmount:   body.InitialBalance.Amount,
 		InitialCurrency: body.InitialBalance.Currency,
 	})
-
 	if err != nil {
+		log.Printf("WALLET USECASE ERROR: %T: %v", err, err)
 		h.respondWithError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
+	log.Printf("WALLET CREATED: %+v", output)
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(output)
+
+	if err := json.NewEncoder(w).Encode(output); err != nil {
+		log.Printf("WALLET RESPONSE ERROR: %v", err)
+	}
 }
 
-// Responsavel por buscar uma carteira de jogador existente
 func (h *HTTPHandler) handleGetWallet(w http.ResponseWriter, r *http.Request) {
 	walletID := r.PathValue("walletId")
 	if strings.TrimSpace(walletID) == "" {
@@ -109,7 +139,7 @@ func (h *HTTPHandler) handleGetWallet(w http.ResponseWriter, r *http.Request) {
 
 	wallet, err := h.walletRepo.FindByID(r.Context(), walletID)
 	if err != nil {
-		if errors.Is(err, repository.ErrWalletNotFound) {
+		if errors.Is(err, repository.ErrWalletNotFound) || errors.Is(err, domain.ErrWalletNotFound) {
 			h.respondWithError(w, http.StatusNotFound, "Wallet not found")
 			return
 		}
@@ -198,6 +228,8 @@ func (h *HTTPHandler) handleProcessTransaction(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	MetricsWagersProcessed.Add(1)
+
 	w.Header().Set("Content-Type", "application/json")
 	if output.IdempotentReplay {
 		w.Header().Set("X-Cache-Lookup", "HIT - Idempotent Replay")
@@ -205,7 +237,6 @@ func (h *HTTPHandler) handleProcessTransaction(w http.ResponseWriter, r *http.Re
 
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(output)
-
 }
 
 func (h *HTTPHandler) handleReconciliation(w http.ResponseWriter, r *http.Request) {
@@ -217,7 +248,7 @@ func (h *HTTPHandler) handleReconciliation(w http.ResponseWriter, r *http.Reques
 
 	output, err := h.reconciliationUsecase.Execute(r.Context(), walletID)
 	if err != nil {
-		if errors.Is(err, repository.ErrWalletNotFound) {
+		if errors.Is(err, repository.ErrWalletNotFound) || errors.Is(err, domain.ErrWalletNotFound) {
 			h.respondWithError(w, http.StatusNotFound, "Wallet not found")
 			return
 		}

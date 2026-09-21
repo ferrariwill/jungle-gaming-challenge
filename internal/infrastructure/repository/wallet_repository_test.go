@@ -34,7 +34,7 @@ func TestWalletRepository_MethodsErrorWithNilPool(t *testing.T) {
 		t.Error("expected stable ErrNilTransaction error when saving with nil transaction")
 	}
 
-	err = repo.Update(ctx, nil, nil)
+	err = repo.Update(ctx, nil, nil, 0)
 	if !errors.Is(err, repository.ErrNilTransaction) {
 		t.Error("expected stable ErrNilTransaction error when updating with nil transaction")
 	}

@@ -92,13 +92,16 @@ func (u *OpenWalletUsecase) Execute(ctx context.Context, input OpenWalletInputDT
 
 		if !initialMoney.IsZero() {
 			openingTxID := fmt.Sprintf("tx_opening_%s", wallet.ID())
+			externalID := fmt.Sprintf("opening_%s", wallet.ID())
+			idemKey := fmt.Sprintf("opening:%s", wallet.ID())
 
 			wagerTx := domain.RehydrateWagerTransaction(
-				openingTxID, "INTERNAL", "INTERNAL", "INTERNAL", "INTERNAL",
+				openingTxID, "INTERNAL", externalID, idemKey, "",
 				wallet.ID(), wallet.PlayerID(), "INTERNAL", "INTERNAL",
 				domain.KindOpening, initialMoney, "", domain.StatusProcessed, "",
 				time.Now().UTC(), time.Now().UTC(),
 			)
+			_ = wagerTx.CalculateAndSetPayloadHash()
 
 			if err := u.txRepo.Save(ctx, tx, wagerTx); err != nil {
 				return err

@@ -2,13 +2,14 @@ package database
 
 import (
 	"context"
-	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 
 	"github.com/ferrariwill/jungle-gaming-challenge/internal/config"
-	"github.com/golang-migrate/migrate"
-	"github.com/golang-migrate/migrate/database/postgres"
+	"github.com/golang-migrate/migrate/v4"
+	_ "github.com/golang-migrate/migrate/v4/database/postgres"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/fx"
 )
@@ -50,27 +51,20 @@ func NewPostgresPool(lc fx.Lifecycle, cfg *config.Config) (*pgxpool.Pool, error)
 func runMigrations(dbURL string) error {
 	log.Println("Running migrations...")
 
-	db, err := sql.Open("pgx", dbURL)
-	if err != nil {
-		return fmt.Errorf("failed to open database: %w", err)
-	}
-
-	defer db.Close()
-
-	driver, err := postgres.WithInstance(db, &postgres.Config{})
-	if err != nil {
-		return fmt.Errorf("failed to create migration driver: %w", err)
-	}
-
-	m, err := migrate.NewWithDatabaseInstance("file://migrations", "postgres", driver)
+	m, err := migrate.New("file://migrations", dbURL)
 	if err != nil {
 		return fmt.Errorf("failed to create migration instance: %w", err)
 	}
+	defer m.Close()
 
-	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
+	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		return fmt.Errorf("failed to apply migrations: %w", err)
 	}
 
 	log.Println("Migrations applied successfully")
 	return nil
+}
+
+func Ping(ctx context.Context, pool *pgxpool.Pool) error {
+	return pool.Ping(ctx)
 }

@@ -1,6 +1,7 @@
+
 services:
   # ==========================================================================================
-  # 0.API & Workers Unificados
+  # 0. API & Workers Unificados
   # ==========================================================================================
   app:
     build:
@@ -19,9 +20,12 @@ services:
       - DB_NAME=jungle_wagering_ledger
       - DB_SSLMODE=disable
       - AWS_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
       - SQS_ENDPOINT=http://localstack:4566
       - WAGER_QUEUE_URL=http://localstack:4566/000000000000/wager-transactions.fifo
-      - IDP_ISSUER_URL=http://keycloak:8080/realms/jungle
+      - EVENTS_QUEUE_URL=http://localstack:4566/000000000000/wager-events
+      - IDP_ISSUER_URL=http://localhost:8080/realms/jungle
       - IDP_JWKS_URL=http://keycloak:8080/realms/jungle/protocol/openid-connect/certs
     depends_on:
       postgres:
@@ -49,31 +53,36 @@ services:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U jungle_user -d jungle_wagering_ledger"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
+      interval: 4s
+      timeout: 3s
+      retries: 40
+      start_period: 40s
     networks:
       - jungle_network
 
   # ==========================================================================================
-  # 2. Mensageria: LocalStack (Simulador AWS SQS)
+  # 2. Mensageria: LocalStack Real (Simulador AWS SQS Oficial)
   # ==========================================================================================
   localstack:
-    image: localstack/localstack:latest
+    image: localstack/localstack:3.0.0
     container_name: jungle_localstack
     ports:
       - "4566:4566"
     environment:
       - SERVICES=sqs
       - AWS_DEFAULT_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - SQS_DELAY_PURGE_RETRY=0
     volumes:
-      - "./infra/localstack/init-sqs.sh:/etc/localstack/init/ready.d/init-sqs.sh"
       - localstack_data:/var/lib/localstack
+      - ./infra/localstack/init-sqs.sh:/etc/localstack/init/ready.d/init-sqs.sh
     healthcheck:
-      test: ["CMD-SHELL", "awslocal sqs list-queues || exit 1"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
+      test: ["CMD-SHELL", "awslocal sqs get-queue-url --queue-name wager-transactions.fifo || exit 1"]
+      interval: 4s
+      timeout: 3s
+      retries: 40
+      start_period: 40s
     networks:
       - jungle_network
 
@@ -81,7 +90,7 @@ services:
   # 3. Autenticação e Autorização: Keycloak (OAuth 2.0 / OIDC IdP)
   # ==========================================================================================
   keycloak:
-    image: quay.io/keycloak/keycloak:22.0
+    image: keycloak/keycloak:22.0.1
     container_name: jungle_keycloak
     command: start-dev --import-realm
     environment:
@@ -89,15 +98,18 @@ services:
       KEYCLOAK_ADMIN_PASSWORD: admin_password
       KC_HEALTH_ENABLED: "true"
       KC_METRICS_ENABLED: "true"
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_BACKCHANNEL: "false"
     ports:
       - "8080:8080"
     volumes:
       - "./infra/keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro"
     healthcheck:
-      test: ["CMD", "exec", "3<>/dev/tcp/localhost/8080", "&&", "echo", "-e", "\"GET /health/live HTTP/1.1\\nHost: localhost\\n\\n\"", ">&3", "&&", "close", "3"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8080 && echo -e 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 && cat <&3 | grep -q 'HTTP/1.1 200 OK'"]
+      interval: 4s
+      timeout: 3s
+      retries: 40
+      start_period: 40s
     networks:
       - jungle_network
 

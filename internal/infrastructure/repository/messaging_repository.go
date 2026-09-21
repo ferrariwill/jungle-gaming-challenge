@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -22,6 +23,7 @@ type OutboxEventDTO struct {
 	EventType   string
 	Payload     string
 	Status      string
+	Attempts    int
 	NextSendAt  time.Time
 	CreatedAt   time.Time
 }
@@ -65,7 +67,14 @@ func (r *MessagingRepository) SaveInbox(ctx context.Context, tx pgx.Tx, consumer
 		VALUES ($1, $2, $3, now(), now())
 	`
 	_, err := tx.Exec(ctx, query, messageID, consumerName, payloadHash)
-	return err
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return ErrDuplicateMessage
+		}
+		return err
+	}
+	return nil
 }
 
 func (r *MessagingRepository) FindPendingOutboxEvents(ctx context.Context, tx pgx.Tx, limit int) ([]OutboxEventDTO, error) {
@@ -74,7 +83,7 @@ func (r *MessagingRepository) FindPendingOutboxEvents(ctx context.Context, tx pg
 	}
 
 	query := `
-		SELECT id, aggregate_id, event_type, payload, status, next_send_at, created_at
+		SELECT id, aggregate_id, event_type, payload, status, attempts, next_send_at, created_at
 		FROM outbox_events
 		WHERE status = 'PENDING' AND next_send_at <= $1
 		ORDER BY next_send_at ASC
@@ -83,7 +92,6 @@ func (r *MessagingRepository) FindPendingOutboxEvents(ctx context.Context, tx pg
 	`
 	now := time.Now().UTC()
 	rows, err := tx.Query(ctx, query, now, limit)
-
 	if err != nil {
 		return nil, fmt.Errorf("failed to find pending outbox events: %w", err)
 	}
@@ -93,13 +101,13 @@ func (r *MessagingRepository) FindPendingOutboxEvents(ctx context.Context, tx pg
 	for rows.Next() {
 		var event OutboxEventDTO
 		err := rows.Scan(&event.ID, &event.AggregateID, &event.EventType, &event.Payload,
-			&event.Status, &event.NextSendAt, &event.CreatedAt)
+			&event.Status, &event.Attempts, &event.NextSendAt, &event.CreatedAt)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan outbox event: %w", err)
 		}
 		events = append(events, event)
 	}
-	return events, nil
+	return events, rows.Err()
 }
 
 func (r *MessagingRepository) MarkOutboxAsPublished(ctx context.Context, tx pgx.Tx, id string) error {
@@ -112,23 +120,24 @@ func (r *MessagingRepository) MarkOutboxAsPublished(ctx context.Context, tx pgx.
 		WHERE id = $2
 	`
 	_, err := tx.Exec(ctx, query, time.Now().UTC(), id)
-
 	if err != nil {
 		return fmt.Errorf("failed to mark outbox as published: %w", err)
 	}
 	return nil
 }
 
-func (r *MessagingRepository) UpdateOutboxRetry(ctx context.Context, tx pgx.Tx, id string, nextSendAt time.Time) error {
+func (r *MessagingRepository) UpdateOutboxRetry(ctx context.Context, tx pgx.Tx, id string, nextSendAt time.Time, maxAttempts int) error {
 	if tx == nil {
 		return ErrNilTransaction
 	}
 	query := `
 		UPDATE outbox_events
-		SET attempts = attempts + 1, next_send_at = $1
+		SET attempts = attempts + 1,
+		    next_send_at = $1,
+		    status = CASE WHEN attempts + 1 >= $3 THEN 'FAILED' ELSE status END
 		WHERE id = $2
 	`
-	_, err := tx.Exec(ctx, query, nextSendAt, id)
+	_, err := tx.Exec(ctx, query, nextSendAt, id, maxAttempts)
 	if err != nil {
 		return fmt.Errorf("failed to update outbox retry: %w", err)
 	}

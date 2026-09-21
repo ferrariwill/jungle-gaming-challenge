@@ -30,7 +30,7 @@ func TestMessagingRepository_MethodsErrorWithNilPool(t *testing.T) {
 		t.Error("expected stable ErrNilTransaction error")
 	}
 
-	err = repo.UpdateOutboxRetry(ctx, nil, "evt_123", time.Now())
+	err = repo.UpdateOutboxRetry(ctx, nil, "evt_123", time.Now(), 10)
 	if !errors.Is(err, repository.ErrNilTransaction) {
 		t.Error("expected stable ErrNilTransaction error")
 	}

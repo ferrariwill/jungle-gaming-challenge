@@ -1,13 +1,17 @@
 package transport_test
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/ferrariwill/jungle-gaming-challenge/internal/config"
 	"github.com/ferrariwill/jungle-gaming-challenge/internal/infrastructure/transport"
+	"github.com/golang-jwt/jwt/v5"
 )
 
 func TestNewAuthMiddleware_Initialization(t *testing.T) {
@@ -69,15 +73,12 @@ func TestAuthMiddleware_RejectsInvalidFormat(t *testing.T) {
 	}
 }
 
-func TestAuthMiddleware_ValidatesStaticLocalToken(t *testing.T) {
-	mw, _ := transport.NewAuthMiddleware(&config.Config{})
+func TestAuthMiddleware_RejectsStaticLocalToken(t *testing.T) {
+	mw, _ := transport.NewAuthMiddleware(&config.Config{
+		IDPIssuerURL: "http://localhost:8080/realms/jungle",
+	})
 
-	contextVerified := false
 	nextHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		providerID, ok := r.Context().Value(transport.ProviderIDKey).(string)
-		if ok && providerID == "provider-a" {
-			contextVerified = true
-		}
 		w.WriteHeader(http.StatusOK)
 	})
 
@@ -87,16 +88,13 @@ func TestAuthMiddleware_ValidatesStaticLocalToken(t *testing.T) {
 
 	mw.Authenticate(nextHandler).ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Errorf("should accept the static token configured for local tests, got status: %d", rec.Code)
-	}
-	if !contextVerified {
-		t.Error("the token was validated but the corresponding providerId was not mapped in the request context")
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("static tokens must be rejected after OIDC enforcement, got status: %d", rec.Code)
 	}
 }
 
 func TestNewHTTPHandler_Initialization(t *testing.T) {
-	handler := transport.NewHTTPHandler(nil, nil, nil, nil, nil)
+	handler := transport.NewHTTPHandler(nil, nil, nil, nil, nil, nil)
 	if handler == nil {
 		t.Fatal("expected a valid instance of HTTPHandler, got nil")
 	}
@@ -104,7 +102,7 @@ func TestNewHTTPHandler_Initialization(t *testing.T) {
 
 func TestHTTPHandler_HealthCheckEndpoints(t *testing.T) {
 	mw, _ := transport.NewAuthMiddleware(&config.Config{})
-	handler := transport.NewHTTPHandler(nil, nil, nil, nil, mw)
+	handler := transport.NewHTTPHandler(nil, nil, nil, nil, mw, nil)
 
 	reqLive := httptest.NewRequest("GET", "/health/live", nil)
 	recLive := httptest.NewRecorder()
@@ -123,18 +121,18 @@ func TestHTTPHandler_HealthCheckEndpoints(t *testing.T) {
 	}
 }
 
-func TestHTTPHandler_WageringRejectsMissingIdempotencyKey(t *testing.T) {
+func TestHTTPHandler_WageringRejectsUnauthorized(t *testing.T) {
 	mw, _ := transport.NewAuthMiddleware(&config.Config{})
-	handler := transport.NewHTTPHandler(nil, nil, nil, nil, mw)
+	handler := transport.NewHTTPHandler(nil, nil, nil, nil, mw, nil)
 
 	req := httptest.NewRequest("POST", "/wagering/transactions", nil)
-	req.Header.Set("Authorization", "Bearer super-secret-token-provedor-a")
+	req.Header.Set("Authorization", "Bearer not-a-jwt")
 
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("expected status 400 Bad Request for missing idempotency key, got: %d", rec.Code)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("expected status 401 for invalid JWT, got: %d", rec.Code)
 	}
 }
 
@@ -149,7 +147,8 @@ func TestSQSWorker_EnvelopeParsing(t *testing.T) {
 			"playerId": "player-1",
 			"walletId": "wal-1",
 			"kind": "BET",
-			"money": { "amount": "25.00", "currency": "BRL" }
+			"money": { "amount": "25.00", "currency": "BRL" },
+			"referenceExternalTransactionId": "tx-ref-1"
 		}
 	}`
 
@@ -161,5 +160,24 @@ func TestSQSWorker_EnvelopeParsing(t *testing.T) {
 
 	if envelope.MessageID != "msg-123" || envelope.Data.Kind != "BET" {
 		t.Error("the mapping or mapping of JSON tags in the SQS envelope struct is inconsistent with the contract")
+	}
+	if envelope.Data.ReferenceExternalID != "tx-ref-1" {
+		t.Error("expected referenceExternalTransactionId mapping")
+	}
+}
+
+func TestSignRSAToken_Smoke(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+		"azp": "provider-a-service",
+		"iss": "http://localhost:8080/realms/jungle",
+		"exp": time.Now().Add(time.Hour).Unix(),
+	})
+	signed, err := token.SignedString(key)
+	if err != nil || signed == "" {
+		t.Fatalf("failed to sign token: %v", err)
 	}
 }

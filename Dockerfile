@@ -1,7 +1,7 @@
 # =========================================================================
 # ESTÁGIO 1: Compilação e Build da Aplicação
 # =========================================================================
-FROM golang:1.22-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
 # Instala ferramentas essenciais de build do ecossistema Linux
 RUN apk add --no-cache git ca-certificates tzdata
@@ -43,4 +43,4 @@ COPY --from=builder /app/jungle-api .
 EXPOSE 3000
 
 # Executa o binário como ponto de entrada principal do container
-ENTRY POINT ["./jungle-api"]
+ENTRYPOINT ["./jungle-api"]

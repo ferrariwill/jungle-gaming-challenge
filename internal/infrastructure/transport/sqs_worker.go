@@ -15,10 +15,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/ferrariwill/jungle-gaming-challenge/internal/config"
-	"github.com/ferrariwill/jungle-gaming-challenge/internal/infrastructure/database"
 	"github.com/ferrariwill/jungle-gaming-challenge/internal/infrastructure/repository"
 	"github.com/ferrariwill/jungle-gaming-challenge/internal/usecase"
-	"github.com/jackc/pgx/v5"
 )
 
 type EnvelopeSQS struct {
@@ -31,13 +29,14 @@ type EnvelopeSQS struct {
 		IdempotencyKey        string `json:"idempotencyKey"`
 		PlayerID              string `json:"playerId"`
 		WalletID              string `json:"walletId"`
-		RounID                string `json:"roundId"`
+		RoundID               string `json:"roundId"`
 		GameID                string `json:"gameId"`
 		Kind                  string `json:"kind"`
 		Money                 struct {
 			Amount   string `json:"amount"`
 			Currency string `json:"currency"`
 		} `json:"money"`
+		ReferenceExternalID string `json:"referenceExternalTransactionId"`
 	} `json:"data"`
 }
 
@@ -45,8 +44,6 @@ type SQSWorker struct {
 	cfg          *config.Config
 	sqsClient    *sqs.Client
 	wagerUsecase *usecase.WagerUsecase
-	messageRepo  *repository.MessagingRepository
-	tm           *database.TransactionManager
 	stopChan     chan struct{}
 	wg           sync.WaitGroup
 }
@@ -54,11 +51,8 @@ type SQSWorker struct {
 func NewSQSWorker(
 	cfg *config.Config,
 	wagerUsecase *usecase.WagerUsecase,
-	messageRepo *repository.MessagingRepository,
-	tm *database.TransactionManager,
 ) (*SQSWorker, error) {
 	awsCfg, err := awsconfig.LoadDefaultConfig(context.Background(), awsconfig.WithRegion(cfg.AWSRegion))
-
 	if err != nil {
 		return nil, fmt.Errorf("failed to load AWS config: %w", err)
 	}
@@ -72,11 +66,8 @@ func NewSQSWorker(
 		cfg:          cfg,
 		sqsClient:    sqsClient,
 		wagerUsecase: wagerUsecase,
-		messageRepo:  messageRepo,
-		tm:           tm,
 		stopChan:     make(chan struct{}),
 	}, nil
-
 }
 
 func (w *SQSWorker) Start() {
@@ -93,12 +84,12 @@ func (w *SQSWorker) Start() {
 			output, err := w.sqsClient.ReceiveMessage(context.Background(), &sqs.ReceiveMessageInput{
 				QueueUrl:            aws.String(w.cfg.WagerQueueURL),
 				MaxNumberOfMessages: 1,
-				VisibilityTimeout:   5,
-				WaitTimeSeconds:     30,
+				VisibilityTimeout:   60,
+				WaitTimeSeconds:     20,
 			})
-
 			if err != nil {
 				log.Printf("Error receiving message from SQS: %v", err)
+				MetricsSQSErrors.Add(1)
 				time.Sleep(3 * time.Second)
 				continue
 			}
@@ -131,48 +122,52 @@ func (w *SQSWorker) Stop(ctx context.Context) error {
 
 func (w *SQSWorker) processSQSEnvelope(message types.Message) {
 	var envelope EnvelopeSQS
+
 	if err := json.Unmarshal([]byte(*message.Body), &envelope); err != nil {
 		log.Printf("Error unmarshalling envelope: %v", err)
-		w.deleteMessage(message)
+		MetricsSQSErrors.Add(1)
+		// Leave message for redrive/DLQ instead of silent delete of poison payloads we cannot parse.
 		return
 	}
 
 	hash := sha256.Sum256([]byte(*message.Body))
 	payloadHash := fmt.Sprintf("%x", hash)
 
-	ctx := context.Background()
+	messageID := envelope.MessageID
+	if message.MessageId != nil && *message.MessageId != "" {
+		messageID = *message.MessageId
+	}
 
-	err := w.tm.ExecuteInTransaction(ctx, func(tx pgx.Tx) error {
-		err := w.messageRepo.SaveInbox(ctx, tx, "sqs_wager_consumer", *message.MessageId, payloadHash)
-		if err != nil {
-			if errors.Is(err, repository.ErrDuplicateMessage) {
-				log.Printf("Duplicate message detected: %v", err)
-				return nil
-			}
-		}
+	input := usecase.InputTransactionDTO{
+		ProviderID:            envelope.Data.ProviderID,
+		ExternalTransactionID: envelope.Data.ExternalTransactionID,
+		IdempotencyKey:        envelope.Data.IdempotencyKey,
+		PlayerID:              envelope.Data.PlayerID,
+		WalletID:              envelope.Data.WalletID,
+		RoundID:               envelope.Data.RoundID,
+		GameID:                envelope.Data.GameID,
+		Kind:                  envelope.Data.Kind,
+		Amount:                envelope.Data.Money.Amount,
+		Currency:              envelope.Data.Money.Currency,
+		ReferenceExternalID:   envelope.Data.ReferenceExternalID,
+	}
 
-		input := usecase.InputTransactionDTO{
-			ProviderID:            envelope.Data.ProviderID,
-			ExternalTransactionID: envelope.Data.ExternalTransactionID,
-			IdempotencyKey:        envelope.Data.IdempotencyKey,
-			PlayerID:              envelope.Data.PlayerID,
-			WalletID:              envelope.Data.WalletID,
-			RoundID:               envelope.Data.RounID,
-			GameID:                envelope.Data.GameID,
-			Kind:                  envelope.Data.Kind,
-			Amount:                envelope.Data.Money.Amount,
-			Currency:              envelope.Data.Money.Currency,
-		}
-
-		_, err = w.wagerUsecase.ProcessTransaction(ctx, input)
-		return err
+	_, err := w.wagerUsecase.ProcessTransactionWithInbox(context.Background(), input, &usecase.InboxClaim{
+		ConsumerName: "sqs_wager_consumer",
+		MessageID:    messageID,
+		PayloadHash:  payloadHash,
 	})
-
 	if err != nil {
+		if errors.Is(err, repository.ErrDuplicateMessage) {
+			w.deleteMessage(message)
+			return
+		}
 		log.Printf("Error processing transaction: %v", err)
+		MetricsSQSErrors.Add(1)
 		return
 	}
 
+	MetricsWagersProcessed.Add(1)
 	w.deleteMessage(message)
 }
 
@@ -183,5 +178,6 @@ func (w *SQSWorker) deleteMessage(message types.Message) {
 	})
 	if err != nil {
 		log.Printf("Error deleting message from SQS: %v", err)
+		MetricsSQSErrors.Add(1)
 	}
 }

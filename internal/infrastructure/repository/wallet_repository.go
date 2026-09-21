@@ -51,7 +51,7 @@ func (r *WalletRepository) Save(ctx context.Context, tx pgx.Tx, wallet *domain.W
 	return nil
 }
 
-func (r *WalletRepository) Update(ctx context.Context, tx pgx.Tx, wallet *domain.Wallet) error {
+func (r *WalletRepository) Update(ctx context.Context, tx pgx.Tx, wallet *domain.Wallet, expectedVersion int64) error {
 	if tx == nil {
 		return ErrNilTransaction
 	}
@@ -59,13 +59,14 @@ func (r *WalletRepository) Update(ctx context.Context, tx pgx.Tx, wallet *domain
 	query := `
 		UPDATE wallets
 		SET amount = $1, version = $2, updated_at = $3
-		WHERE id = $4
+		WHERE id = $4 AND version = $5
 	`
 	result, err := tx.Exec(ctx, query,
 		wallet.Balance().Amount(),
 		wallet.Version(),
 		wallet.UpdatedAt(),
 		wallet.ID(),
+		expectedVersion,
 	)
 
 	if err != nil {

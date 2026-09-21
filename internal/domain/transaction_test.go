@@ -78,3 +78,26 @@ func TestWagerTransaction_DeterministicHash(t *testing.T) {
 		t.Fatalf("Expected hash to be the same, got %s and %s", hash1, tx.PayloadHash())
 	}
 }
+
+func TestNewWagerTransaction_LossRequiresZero(t *testing.T) {
+	zero := domain.NewInternalMoney(0, "BRL")
+	tx, err := domain.NewWagerTransaction(
+		"tx-loss", "provider-a", "ext-loss", "key-loss", "wallet-1", "player-1", "round-1", "game-1",
+		domain.KindLoss, zero, "",
+	)
+	if err != nil {
+		t.Fatalf("expected LOSS with zero amount to be valid: %v", err)
+	}
+	if err := tx.TransitionToPendingReference(); err != nil {
+		t.Fatalf("PENDING -> PENDING_REFERENCE must be allowed: %v", err)
+	}
+
+	nonzero := domain.NewInternalMoney(100, "BRL")
+	_, err = domain.NewWagerTransaction(
+		"tx-loss-2", "provider-a", "ext-loss-2", "key-loss-2", "wallet-1", "player-1", "round-1", "game-1",
+		domain.KindLoss, nonzero, "",
+	)
+	if err != domain.ErrLossTypeMustHaveZeroValue {
+		t.Fatalf("expected ErrLossTypeMustHaveZeroValue, got %v", err)
+	}
+}

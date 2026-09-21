@@ -7,8 +7,8 @@ CREATE TABLE wallets (
     amount BIGINT NOT NULL,
     version BIGINT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL,
-    updated_at TIMESTAMP WITH TIME ZONE NOT NULL,    
-    
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL,
+
     CONSTRAINT chk_wallet_balance_not_negative CHECK (amount >= 0),
     CONSTRAINT uq_player_currency UNIQUE (player_id, currency),
     CONSTRAINT chk_wallet_version_positive CHECK (version > 0)
@@ -32,16 +32,20 @@ CREATE TABLE wager_transactions (
     reference_external_id VARCHAR(64),
     status VARCHAR(30) NOT NULL,
     failure_code VARCHAR(50),
+    next_retry_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL,
 
     CONSTRAINT uq_provider_external_tx UNIQUE (provider_id, external_transaction_id),
+    CONSTRAINT uq_idempotency_key UNIQUE (idempotency_key),
     CONSTRAINT chk_transaction_kind CHECK (kind IN ('OPENING', 'BET', 'WIN', 'LOSS', 'REFUND', 'ROLLBACK')),
     CONSTRAINT chk_transaction_status CHECK (status IN ('PENDING', 'PENDING_REFERENCE', 'PROCESSED', 'REJECTED', 'FAILED'))
 );
 
 CREATE INDEX idx_transactions_idempotency_key ON wager_transactions(idempotency_key);
 CREATE INDEX idx_transactions_provider_ref ON wager_transactions(provider_id, reference_external_id);
+CREATE INDEX idx_transactions_pending_reference ON wager_transactions(status, next_retry_at)
+    WHERE status = 'PENDING_REFERENCE';
 
 CREATE TABLE wallet_ledger_entries (
     id VARCHAR(64) PRIMARY KEY,
@@ -59,7 +63,8 @@ CREATE TABLE wallet_ledger_entries (
         (direction = 'CREDIT' AND balance_after = balance_before + amount) OR
         (direction = 'DEBIT' AND balance_after = balance_before - amount)
     ),
-    CONSTRAINT chk_ledger_amount_positive CHECK (amount > 0)
+    CONSTRAINT chk_ledger_amount_positive CHECK (amount > 0),
+    CONSTRAINT chk_ledger_balance_not_negative CHECK (balance_after >= 0 AND balance_before >= 0)
 );
 
 CREATE TABLE inbox_messages (
@@ -68,7 +73,7 @@ CREATE TABLE inbox_messages (
     payload_hash VARCHAR(64) NOT NULL,
     received_at TIMESTAMP WITH TIME ZONE NOT NULL,
     processed_at TIMESTAMP WITH TIME ZONE NOT NULL,
-    
+
     PRIMARY KEY (consumer_name, message_id)
 );
 
@@ -76,7 +81,7 @@ CREATE TABLE outbox_events (
     id VARCHAR(64) PRIMARY KEY,
     aggregate_id VARCHAR(64) NOT NULL,
     event_type VARCHAR(100) NOT NULL,
-    payload TEXT NOT NULL,          
+    payload TEXT NOT NULL,
     attempts INT NOT NULL DEFAULT 0,
     status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
     next_send_at TIMESTAMP WITH TIME ZONE NOT NULL,
@@ -86,14 +91,14 @@ CREATE TABLE outbox_events (
     CONSTRAINT chk_outbox_status CHECK (status IN ('PENDING', 'PUBLISHED', 'FAILED'))
 );
 
-CREATE INDEX idx_outbox_pending_polling ON outbox_events(status, next_send_at) 
+CREATE INDEX idx_outbox_pending_polling ON outbox_events(status, next_send_at)
 WHERE status = 'PENDING';
 
--- Trigger para proteger o ledger financeiro contra modificações
+-- Trigger para proteger o ledger financeiro contra modificacoes
 CREATE OR REPLACE FUNCTION block_ledger_mutation()
 RETURNS TRIGGER AS $$
 BEGIN
-    RAISE EXCEPTION 'Operação proibida: O ledger financeiro é estritamente append-only e imutável.';
+    RAISE EXCEPTION 'Operacao proibida: O ledger financeiro e estritamente append-only e imutavel.';
 END;
 $$ LANGUAGE plpgsql;
 

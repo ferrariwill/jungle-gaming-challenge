@@ -81,18 +81,19 @@ func NewWagerTransaction(
 		return nil, ErrInvalidTransactionKind
 	}
 
-	//Validacao de regras por tipo de transacao
-	if kind == KindLoss {
+	// Validacao de regras por tipo de transacao
+	switch kind {
+	case KindLoss:
 		if !money.IsZero() {
 			return nil, ErrLossTypeMustHaveZeroValue
-		} else {
-			if money.IsZero() || money.IsNegative() {
-				return nil, ErrActiveExternalFinancialOperationsMustHaveValueStrictlyGreaterThanZero
-			}
+		}
+	case KindBet, KindWin, KindRefund, KindRollback:
+		if money.IsZero() || money.IsNegative() {
+			return nil, ErrActiveExternalFinancialOperationsMustHaveValueStrictlyGreaterThanZero
 		}
 	}
 
-	//Validacao de referencias obrigatorias
+	// Validacao de referencias obrigatorias
 	if (kind == KindRefund || kind == KindRollback) && strings.TrimSpace(referenceExternalID) == "" {
 		return nil, ErrMissingReference
 	}
@@ -224,7 +225,7 @@ func (t *WagerTransaction) TransitionToPendingReference() error {
 	if t.IsTerminal() {
 		return ErrTerminalStateTransition
 	}
-	if t.status == StatusPending {
+	if t.status != StatusPending && t.status != StatusPendingReference {
 		return ErrInvalidStateTransition
 	}
 	t.status = StatusPendingReference
