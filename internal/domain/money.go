@@ -26,7 +26,7 @@ type Money struct {
 
 func (m Money) Amount() int64    { return m.amount }
 func (m Money) Currency() string { return m.currency }
-func NewMoneyFromStrig(valStr, currency string) (Money, error) {
+func NewMoneyFromString(valStr, currency string) (Money, error) {
 	currency = strings.TrimSpace(strings.ToUpper(currency))
 	if len(currency) != 3 {
 		return Money{}, fmt.Errorf("invalid currency format: %s", currency)
@@ -76,14 +76,16 @@ func NewInternalMoney(amount int64, currency string) Money {
 func (m Money) String() string {
 	absAmount := m.amount
 	sign := ""
-	if absAmount < 0 {
+
+	if m.amount < 0 {
 		absAmount = -m.amount
 		sign = "-"
 	}
 
-	integerPart := absAmount / 100
-	decimalPart := absAmount % 100
-	return fmt.Sprintf("%s%d.%02d %s", sign, integerPart, decimalPart, m.currency)
+	integers := absAmount / 100
+	decimals := absAmount % 100
+
+	return fmt.Sprintf("%s%d.%02d", sign, integers, decimals)
 }
 
 func (m Money) Add(other Money) (Money, error) {

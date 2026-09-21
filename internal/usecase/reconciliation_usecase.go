@@ -2,10 +2,15 @@ package usecase
 
 import (
 	"context"
+	"errors"
 	"log"
 
 	"github.com/ferrariwill/jungle-gaming-challenge/internal/domain"
 	"github.com/ferrariwill/jungle-gaming-challenge/internal/infrastructure/repository"
+)
+
+var (
+	ErrNilWalletRepository = errors.New("usecase: wallet repository not initialized")
 )
 
 type ReconciliationOutputDTO struct {
@@ -28,6 +33,10 @@ func NewReconciliationUsecase(walletRepo *repository.WalletRepository) *Reconcil
 }
 
 func (u *ReconciliationUsecase) Execute(ctx context.Context, walletID string) (ReconciliationOutputDTO, error) {
+	if u.walletRepo == nil {
+		return ReconciliationOutputDTO{}, ErrNilWalletRepository
+	}
+
 	wallet, err := u.walletRepo.FindByID(ctx, walletID)
 
 	if err != nil {

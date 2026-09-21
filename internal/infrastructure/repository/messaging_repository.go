@@ -12,6 +12,8 @@ import (
 
 var (
 	ErrDuplicateMessage = errors.New("duplicate message")
+	ErrNilTransaction   = errors.New("infrastructure: the provided SQL transaction is nil")
+	ErrNilDatabasePool  = errors.New("infrastructure: database pool is nil")
 )
 
 type OutboxEventDTO struct {
@@ -35,6 +37,9 @@ func NewMessagingRepository(pool *pgxpool.Pool) *MessagingRepository {
 }
 
 func (r *MessagingRepository) SaveOutbox(ctx context.Context, tx pgx.Tx, event OutboxEventDTO) error {
+	if tx == nil {
+		return ErrNilTransaction
+	}
 	query := `
 		INSERT INTO outbox_events (id, aggregate_id, event_type, payload, status, next_send_at, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -52,6 +57,9 @@ func (r *MessagingRepository) SaveOutbox(ctx context.Context, tx pgx.Tx, event O
 }
 
 func (r *MessagingRepository) SaveInbox(ctx context.Context, tx pgx.Tx, consumerName, messageID, payloadHash string) error {
+	if tx == nil {
+		return ErrNilTransaction
+	}
 	query := `
 		INSERT INTO inbox_messages (message_id, consumer_name, payload_hash, received_at, processed_at)
 		VALUES ($1, $2, $3, now(), now())
@@ -61,6 +69,10 @@ func (r *MessagingRepository) SaveInbox(ctx context.Context, tx pgx.Tx, consumer
 }
 
 func (r *MessagingRepository) FindPendingOutboxEvents(ctx context.Context, tx pgx.Tx, limit int) ([]OutboxEventDTO, error) {
+	if tx == nil {
+		return nil, ErrNilTransaction
+	}
+
 	query := `
 		SELECT id, aggregate_id, event_type, payload, status, next_send_at, created_at
 		FROM outbox_events
@@ -91,6 +103,9 @@ func (r *MessagingRepository) FindPendingOutboxEvents(ctx context.Context, tx pg
 }
 
 func (r *MessagingRepository) MarkOutboxAsPublished(ctx context.Context, tx pgx.Tx, id string) error {
+	if tx == nil {
+		return ErrNilTransaction
+	}
 	query := `
 		UPDATE outbox_events
 		SET status = 'PUBLISHED', published_at = $1
@@ -105,6 +120,9 @@ func (r *MessagingRepository) MarkOutboxAsPublished(ctx context.Context, tx pgx.
 }
 
 func (r *MessagingRepository) UpdateOutboxRetry(ctx context.Context, tx pgx.Tx, id string, nextSendAt time.Time) error {
+	if tx == nil {
+		return ErrNilTransaction
+	}
 	query := `
 		UPDATE outbox_events
 		SET attempts = attempts + 1, next_send_at = $1

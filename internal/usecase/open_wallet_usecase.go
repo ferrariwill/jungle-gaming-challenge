@@ -68,7 +68,7 @@ func (u *OpenWalletUsecase) saveOutbox(ctx context.Context, tx pgx.Tx, aggregate
 }
 
 func (u *OpenWalletUsecase) Execute(ctx context.Context, input OpenWalletInputDTO) (OpenWalletOutputDTO, error) {
-	initialMoney, err := domain.NewMoneyFromStrig(input.InitialAmount, input.InitialCurrency)
+	initialMoney, err := domain.NewMoneyFromString(input.InitialAmount, input.InitialCurrency)
 	if err != nil {
 		return OpenWalletOutputDTO{}, err
 	}

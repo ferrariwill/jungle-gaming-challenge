@@ -8,7 +8,7 @@ import (
 )
 
 func TestNewMoneyFromString_Valid(t *testing.T) {
-	m, err := domain.NewMoneyFromStrig("25.00", "BRL")
+	m, err := domain.NewMoneyFromString("25.00", "BRL")
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
@@ -25,7 +25,7 @@ func TestNewMoneyFromString_Valid(t *testing.T) {
 func TestNewMoneyFromStrings_Invalid(t *testing.T) {
 	invalidInputs := []string{"25", "25.0", "25.000", "abc", "25,00", "NaN", "Infinity", "2.5e+01"}
 	for _, input := range invalidInputs {
-		_, err := domain.NewMoneyFromStrig(input, "BRL")
+		_, err := domain.NewMoneyFromString(input, "BRL")
 		if err == nil {
 			t.Fatalf("Expected error for input %s, got nil", input)
 		}
@@ -46,8 +46,8 @@ func TestMoney_ArithmeticOverflows(t *testing.T) {
 		t.Fatalf("Expected overflow error, got nil")
 	}
 
-	mZero := domain.NewInternalMoney(0, "BRL")
-	_, err = mZero.Negate()
+	mMinNegate := domain.NewInternalMoney(math.MinInt64, "BRL")
+	_, err = mMinNegate.Negate()
 	if err == nil {
 		t.Fatalf("Expected overflow error, got nil")
 	}

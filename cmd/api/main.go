@@ -23,7 +23,7 @@ func main() {
 			repository.NewWalletRepository,
 			repository.NewTransactionRepository,
 			repository.NewMessagingRepository,
-			usecase.NewWagerUseCase,
+			usecase.NewWagerUsecase,
 			usecase.NewOpenWalletUseCase,
 			usecase.NewReconciliationUsecase,
 			transport.NewAuthMiddleware,

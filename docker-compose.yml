@@ -1,26 +1,59 @@
 services:
+  # ==========================================================================================
+  # 0.API & Workers Unificados
+  # ==========================================================================================
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: jungle_api_app
+    ports:
+      - "3000:3000"
+    environment:
+      - SUPPORTED_CURRENCIES=BRL,USD,EUR
+      - INITIAL_WALLET_VERSION=1
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=jungle_user
+      - DB_PASSWORD=jungle_password
+      - DB_NAME=jungle_wagering_ledger
+      - DB_SSLMODE=disable
+      - AWS_REGION=us-east-1
+      - SQS_ENDPOINT=http://localstack:4566
+      - WAGER_QUEUE_URL=http://localstack:4566/000000000000/wager-transactions.fifo
+      - IDP_ISSUER_URL=http://keycloak:8080/realms/jungle
+      - IDP_JWKS_URL=http://keycloak:8080/realms/jungle/protocol/openid-connect/certs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    networks:
+      - jungle_network
 
   # ==========================================================================================
   # 1. Banco de Dados: PostgreSQL
   # ==========================================================================================
   postgres:
-      image: postgres:15-alpine
-      container_name: jungle_postgres
-      environment:
-        POSTGRES_USER: jungle_user
-        POSTGRES_PASSWORD: jungle_password
-        POSTGRES_DB: jungle_wagering_ledger
-      ports:
-        - "5432:5432"
-      volumes:
-        - postgres_data:/var/lib/postgresql/data
-      healthcheck:
-        test: ["CMD-SHELL", "pg_isready -U jungle_user -d jungle_wagering_ledger"]
-        interval: 5s
-        timeout: 5s
-        retries: 5
-      networks:
-        - jungle_network
+    image: postgres:15-alpine
+    container_name: jungle_postgres
+    environment:
+      POSTGRES_USER: jungle_user
+      POSTGRES_PASSWORD: jungle_password
+      POSTGRES_DB: jungle_wagering_ledger
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jungle_user -d jungle_wagering_ledger"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - jungle_network
 
   # ==========================================================================================
   # 2. Mensageria: LocalStack (Simulador AWS SQS)
@@ -59,7 +92,7 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - "./infra/keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro" # Importação automática do Realm/Client
+      - "./infra/keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro"
     healthcheck:
       test: ["CMD", "exec", "3<>/dev/tcp/localhost/8080", "&&", "echo", "-e", "\"GET /health/live HTTP/1.1\\nHost: localhost\\n\\n\"", ">&3", "&&", "close", "3"]
       interval: 5s

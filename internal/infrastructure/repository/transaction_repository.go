@@ -36,6 +36,11 @@ func NewTransactionRepository(pool *pgxpool.Pool) *TransactionRepository {
 }
 
 func (r *TransactionRepository) FindByExternalID(ctx context.Context, providerID, externalID string) (*domain.WagerTransaction, error) {
+
+	if r.pool == nil {
+		return nil, ErrNilDatabasePool
+	}
+
 	query := `
 		SELECT id, provider_id, external_transaction_id, idempotency_key, payload_hash, 
 		       wallet_id, player_id, round_id, game_id, kind, amount, currency, 
@@ -84,6 +89,10 @@ func (r *TransactionRepository) FindByExternalID(ctx context.Context, providerID
 }
 
 func (r *TransactionRepository) Save(ctx context.Context, tx pgx.Tx, wager *domain.WagerTransaction) error {
+	if tx == nil {
+		return ErrNilTransaction
+	}
+
 	query := `
 		INSERT INTO wager_transactions (
 			id, provider_id, external_transaction_id, idempotency_key, payload_hash,
@@ -117,6 +126,10 @@ func (r *TransactionRepository) Save(ctx context.Context, tx pgx.Tx, wager *doma
 }
 
 func (r *TransactionRepository) UpdateStatus(ctx context.Context, tx pgx.Tx, wager *domain.WagerTransaction) error {
+	if tx == nil {
+		return ErrNilTransaction
+	}
+
 	query := `
 		UPDATE wager_transactions 
 		SET status = $1, failure_code = $2, updated_at = $3
@@ -137,6 +150,10 @@ func (r *TransactionRepository) UpdateStatus(ctx context.Context, tx pgx.Tx, wag
 }
 
 func (r *TransactionRepository) SaveLedgerEntry(ctx context.Context, tx pgx.Tx, entry IDLEntryDTO) error {
+	if tx == nil {
+		return ErrNilTransaction
+	}
+
 	query := `
 		INSERT INTO wallet_ledger_entries (id, wallet_id, transaction_id, direction, amount, balance_before, balance_after, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)

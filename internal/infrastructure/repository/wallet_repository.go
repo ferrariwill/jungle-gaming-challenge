@@ -26,6 +26,10 @@ func NewWalletRepository(pool *pgxpool.Pool) *WalletRepository {
 }
 
 func (r *WalletRepository) Save(ctx context.Context, tx pgx.Tx, wallet *domain.Wallet) error {
+	if tx == nil {
+		return ErrNilTransaction
+	}
+
 	query := `
 	INSERT INTO wallets (id, player_id, currency, amount, version, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -48,6 +52,10 @@ func (r *WalletRepository) Save(ctx context.Context, tx pgx.Tx, wallet *domain.W
 }
 
 func (r *WalletRepository) Update(ctx context.Context, tx pgx.Tx, wallet *domain.Wallet) error {
+	if tx == nil {
+		return ErrNilTransaction
+	}
+
 	query := `
 		UPDATE wallets
 		SET amount = $1, version = $2, updated_at = $3
@@ -72,6 +80,10 @@ func (r *WalletRepository) Update(ctx context.Context, tx pgx.Tx, wallet *domain
 }
 
 func (r *WalletRepository) FindByIDWithLock(ctx context.Context, tx pgx.Tx, id string) (*domain.Wallet, error) {
+	if tx == nil {
+		return nil, ErrNilTransaction
+	}
+
 	query := `
 		SELECT id, player_id, currency, amount, version, created_at, updated_at
 		FROM wallets
@@ -107,6 +119,10 @@ func (r *WalletRepository) FindByIDWithLock(ctx context.Context, tx pgx.Tx, id s
 }
 
 func (r *WalletRepository) FindByID(ctx context.Context, id string) (*domain.Wallet, error) {
+	if r.pool == nil {
+		return nil, ErrNilDatabasePool
+	}
+
 	query := `
 		SELECT id, player_id, currency, amount, version, created_at, updated_at
 		FROM wallets
@@ -139,6 +155,10 @@ func (r *WalletRepository) FindByID(ctx context.Context, id string) (*domain.Wal
 }
 
 func (r *WalletRepository) CalculateLedgerBalance(ctx context.Context, walletID string) (int64, int64, error) {
+	if r.pool == nil {
+		return 0, 0, ErrNilDatabasePool
+	}
+
 	query := `
 		SELECT 
 			COALESCE(SUM(CASE WHEN direction = 'CREDIT' THEN amount ELSE 0 END), 0) as total_credits,

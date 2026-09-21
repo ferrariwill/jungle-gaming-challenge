@@ -52,7 +52,7 @@ type WagerUsecase struct {
 	messageRepo *repository.MessagingRepository
 }
 
-func NewWagerUseCase(
+func NewWagerUsecase(
 	cfg *config.Config,
 	tm *database.TransactionManager,
 	walletRepo *repository.WalletRepository,
@@ -69,7 +69,7 @@ func NewWagerUseCase(
 }
 
 func (u *WagerUsecase) ProcessTransaction(ctx context.Context, input InputTransactionDTO) (OutputTransactionDTO, error) {
-	money, err := domain.NewMoneyFromStrig(input.Amount, input.Currency)
+	money, err := domain.NewMoneyFromString(input.Amount, input.Currency)
 
 	if err != nil {
 		return OutputTransactionDTO{}, fmt.Errorf("failed: %w", err)
