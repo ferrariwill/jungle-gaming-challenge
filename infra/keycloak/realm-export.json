@@ -1,0 +1,21 @@
+{
+    "id": "jungle",
+    "realm": "jungle",
+    "enabled": true,
+    "clients": [
+      {
+        "clientId": "provider-a-service",
+        "name": "Provedor A Service",
+        "enabled": true,
+        "clientAuthenticatorType": "client-secret",
+        "secret": "super-secret-token-provedor-a",
+        "serviceAccountsEnabled": true,
+        "publicClient": false,
+        "protocol": "openid-connect",
+        "attributes": {
+          "access.token.lifespan": "3600"
+        }
+      }
+    ]
+  }
+  

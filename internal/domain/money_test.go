@@ -1,9 +1,10 @@
 package domain_test
 
 import (
-	"_/D_/junglegaming/internal/domain"
 	"math"
 	"testing"
+
+	"github.com/ferrariwill/jungle-gaming-challenge/internal/domain"
 )
 
 func TestNewMoneyFromString_Valid(t *testing.T) {

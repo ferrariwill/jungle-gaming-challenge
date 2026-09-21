@@ -1,0 +1,80 @@
+services:
+
+  # ==========================================================================================
+  # 1. Banco de Dados: PostgreSQL
+  # ==========================================================================================
+  postgres:
+      image: postgres:15-alpine
+      container_name: jungle_postgres
+      environment:
+        POSTGRES_USER: jungle_user
+        POSTGRES_PASSWORD: jungle_password
+        POSTGRES_DB: jungle_wagering_ledger
+      ports:
+        - "5432:5432"
+      volumes:
+        - postgres_data:/var/lib/postgresql/data
+      healthcheck:
+        test: ["CMD-SHELL", "pg_isready -U jungle_user -d jungle_wagering_ledger"]
+        interval: 5s
+        timeout: 5s
+        retries: 5
+      networks:
+        - jungle_network
+
+  # ==========================================================================================
+  # 2. Mensageria: LocalStack (Simulador AWS SQS)
+  # ==========================================================================================
+  localstack:
+    image: localstack/localstack:latest
+    container_name: jungle_localstack
+    ports:
+      - "4566:4566"
+    environment:
+      - SERVICES=sqs
+      - AWS_DEFAULT_REGION=us-east-1
+    volumes:
+      - "./infra/localstack/init-sqs.sh:/etc/localstack/init/ready.d/init-sqs.sh"
+      - localstack_data:/var/lib/localstack
+    healthcheck:
+      test: ["CMD-SHELL", "awslocal sqs list-queues || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - jungle_network
+
+  # ==========================================================================================
+  # 3. Autenticação e Autorização: Keycloak (OAuth 2.0 / OIDC IdP)
+  # ==========================================================================================
+  keycloak:
+    image: quay.io/keycloak/keycloak:22.0
+    container_name: jungle_keycloak
+    command: start-dev --import-realm
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin_password
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+    ports:
+      - "8080:8080"
+    volumes:
+      - "./infra/keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro" # Importação automática do Realm/Client
+    healthcheck:
+      test: ["CMD", "exec", "3<>/dev/tcp/localhost/8080", "&&", "echo", "-e", "\"GET /health/live HTTP/1.1\\nHost: localhost\\n\\n\"", ">&3", "&&", "close", "3"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - jungle_network
+
+volumes:
+  postgres_data:
+    driver: local
+  localstack_data:
+    driver: local
+
+networks:
+  jungle_network:
+    name: jungle_network
+    driver: bridge

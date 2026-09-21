@@ -1,0 +1,31 @@
+# Binários e arquivos compilados do Go
+/cmd/api/api
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Dados locais de containers (PostgreSQL e LocalStack)
+.jungle_postgres_data/
+.localstack_data/
+infra/localstack/data/
+infra/postgres/data/
+
+# Arquivos de ambiente e chaves locais (Segurança)
+.env
+.env.local
+.env.production
+*.pem
+*.key
+
+# Ferramentas e IDEs
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
