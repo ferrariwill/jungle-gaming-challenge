@@ -25,10 +25,16 @@ func main() {
 			repository.NewMessagingRepository,
 			usecase.NewWagerUseCase,
 			usecase.NewOpenWalletUseCase,
+			usecase.NewReconciliationUsecase,
 			transport.NewAuthMiddleware,
 			transport.NewHTTPHandler,
+			transport.NewSQSWorker,
+			transport.NewOutboxWorker,
 		),
-		fx.Invoke(StartHTTPServer),
+		fx.Invoke(
+			StartHTTPServer,
+			StartSQSWorker,
+			StartOutboxWorker),
 	)
 
 	app.Run()
@@ -57,4 +63,28 @@ func StartHTTPServer(lifecycle fx.Lifecycle, handler *transport.HTTPHandler) {
 			},
 		})
 
+}
+
+func StartSQSWorker(lifecycle fx.Lifecycle, worker *transport.SQSWorker) {
+	lifecycle.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			go worker.Start()
+			return nil
+		},
+		OnStop: func(ctx context.Context) error {
+			return worker.Stop(ctx)
+		},
+	})
+}
+
+func StartOutboxWorker(lifecycle fx.Lifecycle, worker *transport.OutboxWorker) {
+	lifecycle.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			go worker.Start() // Inicia o loop assíncrono em background
+			return nil
+		},
+		OnStop: func(ctx context.Context) error {
+			return worker.Stop(ctx) // Garante Graceful Shutdown sob sinais do SO
+		},
+	})
 }

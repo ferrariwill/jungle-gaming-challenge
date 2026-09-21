@@ -12,23 +12,26 @@ import (
 )
 
 type HTTPHandler struct {
-	wagerUsecase      *usecase.WagerUsecase
-	openWalletUsecase *usecase.OpenWalletUsecase
-	walletRepo        *repository.WalletRepository
-	authEvent         *AuthMiddleware
+	wagerUsecase          *usecase.WagerUsecase
+	openWalletUsecase     *usecase.OpenWalletUsecase
+	reconciliationUsecase *usecase.ReconciliationUsecase
+	walletRepo            *repository.WalletRepository
+	authEvent             *AuthMiddleware
 }
 
 func NewHTTPHandler(
 	wagerUsecase *usecase.WagerUsecase,
 	openWalletUsecase *usecase.OpenWalletUsecase,
+	reconciliationUsecase *usecase.ReconciliationUsecase,
 	walletRepo *repository.WalletRepository,
 	authEvent *AuthMiddleware,
 ) *HTTPHandler {
 	return &HTTPHandler{
-		wagerUsecase:      wagerUsecase,
-		openWalletUsecase: openWalletUsecase,
-		walletRepo:        walletRepo,
-		authEvent:         authEvent,
+		wagerUsecase:          wagerUsecase,
+		openWalletUsecase:     openWalletUsecase,
+		reconciliationUsecase: reconciliationUsecase,
+		walletRepo:            walletRepo,
+		authEvent:             authEvent,
 	}
 }
 
@@ -56,6 +59,7 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	mux.HandleFunc("POST /wallets", h.handleCreateWallet)
 	mux.HandleFunc("GET /wallets/{walletId}", h.handleGetWallet)
 	mux.HandleFunc("POST /wagering/transactions", h.handleProcessTransaction)
+	mux.HandleFunc("GET /wallets/{walletId}/reconciliation", h.handleReconciliation)
 
 	mux.HandleFunc("GET /health/live", h.handleLiveness)
 	mux.HandleFunc("GET /health/ready", h.handleReadiness)
@@ -202,4 +206,26 @@ func (h *HTTPHandler) handleProcessTransaction(w http.ResponseWriter, r *http.Re
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(output)
 
+}
+
+func (h *HTTPHandler) handleReconciliation(w http.ResponseWriter, r *http.Request) {
+	walletID := r.PathValue("walletId")
+	if strings.TrimSpace(walletID) == "" {
+		h.respondWithError(w, http.StatusBadRequest, "Wallet ID is required")
+		return
+	}
+
+	output, err := h.reconciliationUsecase.Execute(r.Context(), walletID)
+	if err != nil {
+		if errors.Is(err, repository.ErrWalletNotFound) {
+			h.respondWithError(w, http.StatusNotFound, "Wallet not found")
+			return
+		}
+		h.respondWithError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(output)
 }

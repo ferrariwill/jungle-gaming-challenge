@@ -137,3 +137,24 @@ func (r *WalletRepository) FindByID(ctx context.Context, id string) (*domain.Wal
 	money := domain.NewInternalMoney(amount, currency)
 	return domain.RehydrateWallet(walletID, playerID, money, version, createdAt, updatedAt)
 }
+
+func (r *WalletRepository) CalculateLedgerBalance(ctx context.Context, walletID string) (int64, int64, error) {
+	query := `
+		SELECT 
+			COALESCE(SUM(CASE WHEN direction = 'CREDIT' THEN amount ELSE 0 END), 0) as total_credits,
+			COALESCE(SUM(CASE WHEN direction = 'DEBIT' THEN amount ELSE 0 END), 0) as total_debits,
+			COUNT(*) as total_entries
+		FROM wallet_ledger_entries
+		WHERE wallet_id = $1
+	`
+	var credits, debits, count int64
+	err := r.pool.QueryRow(ctx, query, walletID).Scan(&credits, &debits, &count)
+
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to calculate ledger balance: %w", err)
+	}
+
+	calculatedBalance := credits - debits
+
+	return calculatedBalance, count, nil
+}
